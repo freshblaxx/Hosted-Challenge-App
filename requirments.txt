@@ -3,5 +3,6 @@ pandas
 numpy
 altair
 prophet
+cmdstanpy
 xgboost
 scikit-learn
