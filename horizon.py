@@ -2,26 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
-
-
-from prophet import Prophet
-# m = Prophet(stan_backend='PYSTAN', yearly_seasonality=True)  # Use this in your fit section
-import cmdstanpy
-cmdstanpy.set_cmdstan_path('/usr/local/lib')  # Helps on Linux hosts like Streamlit
-# Or explicitly set backend in Prophet init later:
-# m = Prophet(stan_backend='CMDSTANPY', yearly_seasonality=True)
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
-import statsmodels.api as sm
-
-
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+import warnings
+warnings.filterwarnings("ignore")
 
 # Page setup
 st.set_page_config(
     layout="wide",
     page_title="Whirlpool — Sales and Price Optimization Dashboard"
 )
-
 
 # Load and clean data
 @st.cache_data
@@ -49,24 +40,17 @@ def load_data():
 
     return df
 
-
 df = load_data()
-
 
 # Main layout
 st.title("Whirlpool — Sales Analytics and Price Optimization")
 
 tab1, tab2 = st.tabs(["Sales Dashboard", "Price Optimization"])
 
-
 with tab1:
-    st.markdown("""
-    ### Overview  
-    Explore Whirlpool sales performance with comparisons and time-series views.
-    """)
+    st.markdown("### Overview  \nExplore Whirlpool sales performance with comparisons and time-series views.")
 
     st.subheader("Date Range Filter")
-
     if "date" in df.columns:
         min_date = df["date"].min()
         max_date = df["date"].max()
@@ -86,7 +70,7 @@ with tab1:
         (df["date"].dt.date <= date_range[1])
     ].copy()
 
-    # KPI summary metrics
+    # KPIs
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Total Gross Sales", f"${df_filtered['gross_sales'].sum():,.0f}")
     kpi2.metric("Average Final Price", f"${df_filtered['price_final'].mean():.2f}")
@@ -94,82 +78,41 @@ with tab1:
     kpi4.metric("Average DCM", f"{df_filtered['dcm'].mean():.2f}")
 
     st.subheader("Sales Performance Comparison")
-
-    view_choice = st.selectbox(
-        "View Sales By",
-        ["Product Type", "Trade Partner", "SKU"]
-    )
+    view_choice = st.selectbox("View Sales By", ["Product Type", "Trade Partner", "SKU"])
 
     if view_choice == "Product Type":
-        df_view = (
-            df_filtered.groupby("product_type", as_index=False)["gross_sales"]
-            .sum()
-            .sort_values("gross_sales", ascending=False)
-            .rename(columns={"product_type": "Category"})
-        )
+        df_view = df_filtered.groupby("product_type", as_index=False)["gross_sales"].sum().sort_values("gross_sales", ascending=False).rename(columns={"product_type": "Category"})
         y_col = "Category"
-
     elif view_choice == "Trade Partner":
-        df_view = (
-            df_filtered.groupby("trade_partner", as_index=False)["gross_sales"]
-            .sum()
-            .sort_values("gross_sales", ascending=False)
-            .rename(columns={"trade_partner": "Trade Partner"})
-        )
+        df_view = df_filtered.groupby("trade_partner", as_index=False)["gross_sales"].sum().sort_values("gross_sales", ascending=False).rename(columns={"trade_partner": "Trade Partner"})
         y_col = "Trade Partner"
-
     else:
-        df_view = (
-            df_filtered.groupby("sku", as_index=False)["gross_sales"]
-            .sum()
-            .sort_values("gross_sales", ascending=False)
-            .head(20)
-            .rename(columns={"sku": "SKU"})
-        )
+        df_view = df_filtered.groupby("sku", as_index=False)["gross_sales"].sum().sort_values("gross_sales", ascending=False).head(20).rename(columns={"sku": "SKU"})
         y_col = "SKU"
 
-    chart_combined = (
-        alt.Chart(df_view)
-        .mark_bar()
-        .encode(
-            x=alt.X("gross_sales:Q", title="Total Gross Sales"),
-            y=alt.Y(f"{y_col}:N", sort="-x"),
-            tooltip=[y_col, "gross_sales"]
-        )
-        .properties(height=380)
-    )
+    chart_combined = alt.Chart(df_view).mark_bar().encode(
+        x=alt.X("gross_sales:Q", title="Total Gross Sales"),
+        y=alt.Y(f"{y_col}:N", sort="-x"),
+        tooltip=[y_col, "gross_sales"]
+    ).properties(height=380)
 
     st.altair_chart(chart_combined, use_container_width=True)
 
     st.subheader("Gross Sales Over Time")
+    df_time = df_filtered.groupby("date", as_index=False)["gross_sales"].sum().sort_values("date")
 
-    df_time = (
-        df_filtered.groupby("date", as_index=False)["gross_sales"]
-        .sum()
-        .sort_values("date")
-    )
-
-    chart_time = (
-        alt.Chart(df_time)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("date:T", title="Date"),
-            y=alt.Y("gross_sales:Q", title="Gross Sales"),
-            tooltip=["date", "gross_sales"]
-        )
-        .properties(height=350)
-    )
+    chart_time = alt.Chart(df_time).mark_line(point=True).encode(
+        x=alt.X("date:T", title="Date"),
+        y=alt.Y("gross_sales:Q", title="Gross Sales"),
+        tooltip=["date", "gross_sales"]
+    ).properties(height=350)
 
     st.altair_chart(chart_time, use_container_width=True)
 
 
 with tab2:
     st.header("Price Optimization — Maximize DCM for a SKU")
-
-    st.markdown("""
-    This section uses an XGBoost model to estimate how pricing affects DCM  
-    and suggests a price that may maximize performance for the selected SKU.
-    """)
+    st.markdown("This section uses XGBoost to estimate optimal pricing and forecasts future DCM using Exponential Smoothing (robust & fast).")
 
     trade_counts = df["trade_partner"].value_counts()
     all_trade_partners = trade_counts.index.tolist()
@@ -189,22 +132,12 @@ with tab2:
         st.stop()
 
     st.subheader("Predicted DCM vs Price (XGBoost)")
-
     X = df_model[["price_final"]]
     y = df_model["dcm"]
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    model = XGBRegressor(
-        n_estimators=300,
-        learning_rate=0.05,
-        max_depth=4,
-        subsample=0.9,
-        colsample_bytree=0.8,
-    )
-
+    model = XGBRegressor(n_estimators=300, learning_rate=0.05, max_depth=4, subsample=0.9, colsample_bytree=0.8, random_state=42)
     model.fit(X_train, y_train)
 
     price_range = np.linspace(X["price_final"].min(), X["price_final"].max(), 80)
@@ -214,71 +147,71 @@ with tab2:
     optimal_dcm = dcm_pred.max()
 
     m1, m2 = st.columns(2)
-    m1.metric("Optimal Price", f"${optimal_price:.2f}")
-    m2.metric("Max Predicted DCM", f"{optimal_dcm:.2f}")
+    m1.metric("Optimal Price", f"${optimal_price:,.2f}")
+    m2.metric("Max Predicted DCM", f"${optimal_dcm:,.2f}")
 
-    df_pred_curve = pd.DataFrame({
-        "price_final": price_range,
-        "predicted_dcm": dcm_pred
-    })
+    df_pred_curve = pd.DataFrame({"price_final": price_range, "predicted_dcm": dcm_pred})
 
-    chart_price_curve = (
-        alt.Chart(df_pred_curve)
-        .mark_line()
-        .encode(
-            x=alt.X("price_final:Q", title="Final Price"),
-            y=alt.Y("predicted_dcm:Q", title="Predicted DCM"),
-            tooltip=["price_final", "predicted_dcm"]
-        )
-        .properties(height=320)
-    )
+    chart_price_curve = alt.Chart(df_pred_curve).mark_line().encode(
+        x=alt.X("price_final:Q", title="Final Price"),
+        y=alt.Y("predicted_dcm:Q", title="Predicted DCM"),
+        tooltip=["price_final", "predicted_dcm"]
+    ).properties(height=320)
 
     st.altair_chart(chart_price_curve, use_container_width=True)
 
-    st.subheader("DCM Forecast Over Time (Prophet)")
+    st.subheader("DCM Forecast Over Time (Exponential Smoothing)")
 
-    df_prophet = (
-        df_model[["date", "dcm"]]
-        .rename(columns={"date": "ds", "dcm": "y"})
-        .dropna()
-    )
+    ts_data = df_model[["date", "dcm"]].copy()
+    ts_data = ts_data.rename(columns={"date": "ds", "dcm": "y"})
+    ts_data = ts_data.dropna().sort_values("ds")
+    ts_data = ts_data.set_index("ds")["y"]
 
-    if len(df_prophet) >= 10:
-        m = Prophet(yearly_seasonality=True)
-        m.fit(df_prophet)
+    if len(ts_data) >= 12:
+        # Resample to monthly for smoother, more reliable forecast
+        ts_monthly = ts_data.resample("M").mean().fillna(method="ffill")
 
-        future = m.make_future_dataframe(periods=60)
-        forecast = m.predict(future)
-
-        plot_df = forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
-
-        line = (
-            alt.Chart(plot_df)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("ds:T", title="Date"),
-                y=alt.Y("yhat:Q", title="Predicted DCM"),
-                tooltip=[
-                    alt.Tooltip("ds:T", title="Date"),
-                    alt.Tooltip("yhat:Q", title="Predicted DCM"),
-                    alt.Tooltip("yhat_lower:Q", title="Lower CI"),
-                    alt.Tooltip("yhat_upper:Q", title="Upper CI"),
-                ]
+        try:
+            model_ets = ExponentialSmoothing(
+                ts_monthly,
+                trend="add",
+                seasonal="add",
+                seasonal_periods=12
             )
-            .properties(height=260)
-        )
+            fit = model_ets.fit()
 
-        band = (
-            alt.Chart(plot_df)
-            .mark_area(opacity=0.25)
-            .encode(
+            forecast_steps = 60
+            forecast = fit.forecast(forecast_steps)
+            forecast_index = pd.date_range(start=ts_monthly.index[-1] + pd.offsets.MonthBegin(1), periods=forecast_steps, freq="M")
+
+            # Combine historical + forecast
+            plot_df = pd.DataFrame({
+                "ds": list(ts_monthly.index) + list(forecast_index),
+                "value": list(ts_monthly.values) + list(forecast),
+                "type": ["Historical"] * len(ts_monthly) + ["Forecast"] * forecast_steps
+            })
+
+            # Approximate confidence interval
+            se = np.std(fit.resid)
+            plot_df["lower"] = plot_df["value"] - 1.96 * se
+            plot_df["upper"] = plot_df["value"] + 1.96 * se
+
+            line = alt.Chart(plot_df).mark_line().encode(
                 x="ds:T",
-                y="yhat_lower:Q",
-                y2="yhat_upper:Q"
+                y=alt.Y("value:Q", title="DCM"),
+                color=alt.Color("type:N", scale=alt.Scale(domain=["Historical", "Forecast"], range=["#1f77b4", "#ff7f0e"])),
+                tooltip=["ds", "value", "type"]
             )
-        )
 
-        st.altair_chart(band + line, use_container_width=True)
+            band = alt.Chart(plot_df[plot_df["type"] == "Forecast"]).mark_area(opacity=0.2).encode(
+                x="ds:T",
+                y="lower:Q",
+                y2="upper:Q"
+            )
 
+            st.altair_chart(band + line, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Forecasting failed: {str(e)}. Try a different SKU.")
     else:
-        st.info("Not enough time-series points to train Prophet.")
+        st.info("Not enough data points (need at least 12 months) for reliable forecasting.")
