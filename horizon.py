@@ -5,6 +5,10 @@ import altair as alt
 
 
 from prophet import Prophet
+import cmdstanpy
+cmdstanpy.set_cmdstan_path('/usr/local/lib')  # Helps on Linux hosts like Streamlit
+# Or explicitly set backend in Prophet init later:
+# m = Prophet(stan_backend='CMDSTANPY', yearly_seasonality=True)
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 import statsmodels.api as sm
