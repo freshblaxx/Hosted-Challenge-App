@@ -5,5 +5,13 @@ numpy<2
 pandas
 streamlit
 altair
-xgboost
+xgboost>=2.0.0
 scikit-learn
+streamlit
+pandas
+numpy
+scikit-learn
+xgboost
+plotly
+matplotlib
+seaborn
