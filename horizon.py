@@ -19,7 +19,7 @@ st.set_page_config(
 # Load and clean data
 @st.cache_data
 def load_data():
-    df = pd.read_csv("/Users/domo/Library/Mobile Documents/com~apple~CloudDocs/Desktop/University/Master/Semester 3/Courses/Data Analytics/code/II/project/final shit/ML_Clustered_Database_Horizon_Global_Consulting.csv")
+    df = pd.read_csv("ML_Clustered_Database_Horizon_Global_Consulting.csv")
     df.columns = [c.strip() for c in df.columns]
 
     if "date" in df.columns:
