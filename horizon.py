@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
-from xgboost import XGBRegressor
-from sklearn.model_selection import train_test_split
+import statsmodels.api as sm
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import warnings
 warnings.filterwarnings("ignore")
@@ -112,7 +111,7 @@ with tab1:
 
 with tab2:
     st.header("Price Optimization — Maximize DCM for a SKU")
-    st.markdown("This section uses XGBoost to estimate optimal pricing and forecasts future DCM using Exponential Smoothing (robust & fast).")
+    st.markdown("This section uses linear regression to estimate optimal pricing and forecasts future DCM using Exponential Smoothing (robust & fast).")
 
     trade_counts = df["trade_partner"].value_counts()
     all_trade_partners = trade_counts.index.tolist()
@@ -131,24 +130,31 @@ with tab2:
         st.warning("Not enough data for this SKU and trade partner. Try another choice.")
         st.stop()
 
-    st.subheader("Predicted DCM vs Price (XGBoost)")
+    st.subheader("Predicted DCM vs Price (Linear Regression)")
     X = df_model[["price_final"]]
     y = df_model["dcm"]
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Add constant for intercept
+    X = sm.add_constant(X)
 
-    model = XGBRegressor(n_estimators=300, learning_rate=0.05, max_depth=4, subsample=0.9, colsample_bytree=0.8, random_state=42)
-    model.fit(X_train, y_train)
+    # Fit OLS model
+    model = sm.OLS(y, X).fit()
 
-    price_range = np.linspace(X["price_final"].min(), X["price_final"].max(), 80)
-    dcm_pred = model.predict(price_range.reshape(-1, 1))
+    # Predict over price range
+    price_range = np.linspace(df_model["price_final"].min(), df_model["price_final"].max(), 80)
+    X_pred = sm.add_constant(pd.DataFrame({"price_final": price_range}))
+    dcm_pred = model.predict(X_pred)
 
+    # Find optimal price (max DCM)
     optimal_price = price_range[np.argmax(dcm_pred)]
     optimal_dcm = dcm_pred.max()
 
     m1, m2 = st.columns(2)
     m1.metric("Optimal Price", f"${optimal_price:,.2f}")
     m2.metric("Max Predicted DCM", f"${optimal_dcm:,.2f}")
+
+    # Model summary (optional: show R-squared)
+    st.caption(f"Model R²: {model.rsquared:.3f} | Price elasticity: {model.params[1]:.3f}")
 
     df_pred_curve = pd.DataFrame({"price_final": price_range, "predicted_dcm": dcm_pred})
 
