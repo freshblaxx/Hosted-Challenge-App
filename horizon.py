@@ -3,9 +3,18 @@ import pandas as pd
 import numpy as np
 import altair as alt
 
-from prophet import Prophet
+
+
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
+import statsmodels.api as sm
+
+df_ts = df_model[['date','dcm']].dropna().sort_values('date')
+ts = df_ts.set_index('date')['dcm']
+model = sm.tsa.Holt(ts, initialization_method='estimated').fit()
+forecast = model.forecast(60)  # 60 Tage in die Zukunft
+
+plot_df = forecast.reset_index().rename(columns={'index':'ds',0:'yhat'})
 
 
 # Page setup
