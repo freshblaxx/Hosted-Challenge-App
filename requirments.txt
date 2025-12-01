@@ -1,8 +1,9 @@
-streamlit
+prophet==1.1.5
+cmdstanpy==1.2.1
+pystan==2.19.1.1
+numpy<2
 pandas
-numpy
+streamlit
 altair
-prophet
-cmdstanpy
 xgboost
 scikit-learn
