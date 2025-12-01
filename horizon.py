@@ -5,6 +5,7 @@ import altair as alt
 
 
 from prophet import Prophet
+# m = Prophet(stan_backend='PYSTAN', yearly_seasonality=True)  # Use this in your fit section
 import cmdstanpy
 cmdstanpy.set_cmdstan_path('/usr/local/lib')  # Helps on Linux hosts like Streamlit
 # Or explicitly set backend in Prophet init later:

@@ -8,3 +8,4 @@ xgboost==2.0.3
 scikit-learn==1.4.2
 statsmodels==0.14.2
 plotly==5.20.0
+pystan==3.7.0  # Alternative to cmdstanpy
