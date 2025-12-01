@@ -2,10 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
-import statsmodels.api as sm
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
-import warnings
-warnings.filterwarnings("ignore")
 
 # Page setup
 st.set_page_config(
@@ -111,7 +107,7 @@ with tab1:
 
 with tab2:
     st.header("Price Optimization — Maximize DCM for a SKU")
-    st.markdown("This section uses linear regression to estimate optimal pricing and forecasts future DCM using Exponential Smoothing (robust & fast).")
+    st.markdown("This section uses linear regression (NumPy) to estimate optimal pricing and forecasts future DCM using trend analysis (reliable & fast).")
 
     trade_counts = df["trade_partner"].value_counts()
     all_trade_partners = trade_counts.index.tolist()
@@ -131,30 +127,35 @@ with tab2:
         st.stop()
 
     st.subheader("Predicted DCM vs Price (Linear Regression)")
-    X = df_model[["price_final"]]
-    y = df_model["dcm"]
-
-    # Add constant for intercept
-    X = sm.add_constant(X)
-
-    # Fit OLS model
-    model = sm.OLS(y, X).fit()
-
+    
+    # Prepare data for NumPy polyfit (linear: degree=1)
+    prices = df_model["price_final"].values
+    dcms = df_model["dcm"].values
+    
+    # Fit linear model: y = slope * x + intercept
+    slope, intercept = np.polyfit(prices, dcms, 1)
+    
     # Predict over price range
-    price_range = np.linspace(df_model["price_final"].min(), df_model["price_final"].max(), 80)
-    X_pred = sm.add_constant(pd.DataFrame({"price_final": price_range}))
-    dcm_pred = model.predict(X_pred)
-
-    # Find optimal price (max DCM)
-    optimal_price = price_range[np.argmax(dcm_pred)]
-    optimal_dcm = dcm_pred.max()
+    price_range = np.linspace(prices.min(), prices.max(), 80)
+    dcm_pred = slope * price_range + intercept
+    
+    # Find optimal price (max DCM) - for linear, it's at the boundary (highest price if positive slope, else lowest)
+    if slope > 0:
+        optimal_price = price_range.max()
+    else:
+        optimal_price = price_range.min()
+    optimal_dcm = slope * optimal_price + intercept
 
     m1, m2 = st.columns(2)
     m1.metric("Optimal Price", f"${optimal_price:,.2f}")
     m2.metric("Max Predicted DCM", f"${optimal_dcm:,.2f}")
 
-    # Model summary (optional: show R-squared)
-    st.caption(f"Model R²: {model.rsquared:.3f} | Price elasticity: {model.params[1]:.3f}")
+    # Simple R² approximation
+    y_pred_all = slope * prices + intercept
+    ss_res = np.sum((dcms - y_pred_all)**2)
+    ss_tot = np.sum((dcms - np.mean(dcms))**2)
+    r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+    st.caption(f"Model R²: {r_squared:.3f} | Price elasticity: {slope:.3f}")
 
     df_pred_curve = pd.DataFrame({"price_final": price_range, "predicted_dcm": dcm_pred})
 
@@ -166,58 +167,58 @@ with tab2:
 
     st.altair_chart(chart_price_curve, use_container_width=True)
 
-    st.subheader("DCM Forecast Over Time (Exponential Smoothing)")
+    st.subheader("DCM Forecast Over Time (Trend Analysis)")
 
     ts_data = df_model[["date", "dcm"]].copy()
-    ts_data = ts_data.rename(columns={"date": "ds", "dcm": "y"})
-    ts_data = ts_data.dropna().sort_values("ds")
-    ts_data = ts_data.set_index("ds")["y"]
-
+    ts_data = ts_data.dropna().sort_values("date")
+    
     if len(ts_data) >= 12:
-        # Resample to monthly for smoother, more reliable forecast
-        ts_monthly = ts_data.resample("M").mean().fillna(method="ffill")
+        # Create time index (days since start)
+        ts_data["time_idx"] = (ts_data["date"] - ts_data["date"].min()).dt.days
+        times = ts_data["time_idx"].values
+        values = ts_data["dcm"].values
+        
+        # Fit linear trend
+        trend_slope, trend_intercept = np.polyfit(times, values, 1)
+        
+        # Historical + forecast (60 periods, assume monthly ~30 days)
+        forecast_steps = 60
+        future_times = np.linspace(times.max(), times.max() + 30 * forecast_steps, forecast_steps)
+        historical_pred = trend_slope * times + trend_intercept
+        forecast_pred = trend_slope * future_times + trend_intercept
+        
+        # Simple moving average for smoothing
+        window = min(3, len(values) // 4)  # Adaptive window
+        smoothed_hist = np.convolve(values, np.ones(window)/window, mode='valid')
+        if len(smoothed_hist) < len(values):
+            smoothed_hist = np.pad(smoothed_hist, (0, len(values) - len(smoothed_hist)), mode='edge')
+        
+        # Combine for plot
+        plot_df = pd.DataFrame({
+            "ds": list(ts_data["date"]) + list(ts_data["date"].max() + pd.to_timedelta(future_times - times.max(), unit='D')),
+            "value": list(smoothed_hist) + list(forecast_pred),
+            "type": ["Historical"] * len(ts_data) + ["Forecast"] * forecast_steps
+        })
+        
+        # Approximate CI (std dev based)
+        se = np.std(values - historical_pred)
+        plot_df["lower"] = plot_df["value"] - 1.96 * se
+        plot_df["upper"] = plot_df["value"] + 1.96 * se
 
-        try:
-            model_ets = ExponentialSmoothing(
-                ts_monthly,
-                trend="add",
-                seasonal="add",
-                seasonal_periods=12
-            )
-            fit = model_ets.fit()
+        line = alt.Chart(plot_df).mark_line(point=True).encode(
+            x="ds:T",
+            y=alt.Y("value:Q", title="DCM"),
+            color=alt.Color("type:N", scale=alt.Scale(domain=["Historical", "Forecast"], range=["#1f77b4", "#ff7f0e"])),
+            tooltip=["ds", "value", "type"]
+        )
 
-            forecast_steps = 60
-            forecast = fit.forecast(forecast_steps)
-            forecast_index = pd.date_range(start=ts_monthly.index[-1] + pd.offsets.MonthBegin(1), periods=forecast_steps, freq="M")
+        band = alt.Chart(plot_df[plot_df["type"] == "Forecast"]).mark_area(opacity=0.2).encode(
+            x="ds:T",
+            y="lower:Q",
+            y2="upper:Q"
+        )
 
-            # Combine historical + forecast
-            plot_df = pd.DataFrame({
-                "ds": list(ts_monthly.index) + list(forecast_index),
-                "value": list(ts_monthly.values) + list(forecast),
-                "type": ["Historical"] * len(ts_monthly) + ["Forecast"] * forecast_steps
-            })
+        st.altair_chart(band + line, use_container_width=True)
 
-            # Approximate confidence interval
-            se = np.std(fit.resid)
-            plot_df["lower"] = plot_df["value"] - 1.96 * se
-            plot_df["upper"] = plot_df["value"] + 1.96 * se
-
-            line = alt.Chart(plot_df).mark_line().encode(
-                x="ds:T",
-                y=alt.Y("value:Q", title="DCM"),
-                color=alt.Color("type:N", scale=alt.Scale(domain=["Historical", "Forecast"], range=["#1f77b4", "#ff7f0e"])),
-                tooltip=["ds", "value", "type"]
-            )
-
-            band = alt.Chart(plot_df[plot_df["type"] == "Forecast"]).mark_area(opacity=0.2).encode(
-                x="ds:T",
-                y="lower:Q",
-                y2="upper:Q"
-            )
-
-            st.altair_chart(band + line, use_container_width=True)
-
-        except Exception as e:
-            st.error(f"Forecasting failed: {str(e)}. Try a different SKU.")
     else:
-        st.info("Not enough data points (need at least 12 months) for reliable forecasting.")
+        st.info("Not enough data points (need at least 12) for reliable forecasting.")
