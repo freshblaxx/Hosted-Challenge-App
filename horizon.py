@@ -4,7 +4,7 @@ import numpy as np
 import altair as alt
 
 
-
+from prophet import Prophet
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 import statsmodels.api as sm
