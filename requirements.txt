@@ -116,7 +116,6 @@ playwright==1.54.0
 plotly==6.3.0
 prometheus_client==0.22.1
 prompt_toolkit==3.0.51
-prophet==1.1.2
 protobuf==6.33.0
 psutil==7.0.0
 ptyprocess==0.7.0
